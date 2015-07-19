@@ -55,6 +55,7 @@ class CompileUnit(object):
 
         # A list of DIEs belonging to this CU. Lazily parsed.
         self._dielist = []
+        self._diedict = {}
 
     def dwarf_format(self):
         """ Get the DWARF format (32 or 64) for this CU
@@ -81,6 +82,12 @@ class CompileUnit(object):
         """
         self._parse_DIEs()
         return iter(self._dielist)
+    
+    def get_DIE_at_offset(self, offset):
+        """ Get the DIE object at the given offset if availible. 
+        """
+        self._parse_DIEs()
+        return self._diedict.get(offset)
 
     #------ PRIVATE ------#
 
@@ -118,9 +125,16 @@ class CompileUnit(object):
                     stream=self.dwarfinfo.debug_info_sec.stream,
                     offset=die_offset)
             self._dielist.append(die)
+            self._diedict[die_offset - self.cu_offset] = die
             die_offset += die.size
+        
+        # Second pass: translate the attributes of die DIEs again
+        # (must be done again, because before DIEs in the links 
+        #  may didn't' exist yet)
+        for offset, die in self._diedict.items():
+        	die._translate_attr_values()
 
-        # Second pass - unflatten the DIE tree
+        # Third pass: unflatten the DIE tree
         self._unflatten_tree()
 
     def _unflatten_tree(self):

@@ -35,8 +35,65 @@ from .enums import DW_FORM_raw2name
 #   Offset of this attribute's value in the stream (absolute offset, relative
 #   the beginning of the whole stream)
 #
-AttributeValue = namedtuple(
-    'AttributeValue', 'name form value raw_value offset')
+
+class AttributeValue(object):
+    def __init__(self, name, form, raw_value, offset, die):
+        #TODO
+        """ TODO
+        """
+        self.name = name
+        self.form = form
+        self.raw_value = raw_value
+        self.value = None
+        self.offset = offset
+        self.die = die
+        
+        self._translate_value()
+            
+    def _translate_value(self):
+        #TODO
+        
+        if self.value is None:
+            self.value = self._translate_attr_value(self.form, self.raw_value)
+    
+    def _translate_attr_value(self, form, raw_value):
+        """ Translate a raw value according to the form
+            (not complete!)
+        """
+        value = None
+        if form == 'DW_FORM_strp':
+            with preserve_stream_pos(self.die.stream):
+                value = self.die.dwarfinfo.get_string_from_table(raw_value)
+        elif form == 'DW_FORM_flag':
+            value = not raw_value == 0
+        elif form == 'DW_FORM_indirect':
+            try:
+                form = DW_FORM_raw2name[raw_value]
+            except KeyError as err:
+                raise DWARFError(
+                        'Found DW_FORM_indirect with unknown raw_value=' +
+                        str(raw_value))
+
+            raw_value = struct_parse(
+                self.die.cu.structs.Dwarf_dw_form[form], self.die.stream)
+            # Let's hope this doesn't get too deep :-)
+            value = self._translate_attr_value(form, raw_value)
+        elif form == 'DW_FORM_ref4':
+            value = self.die.cu.get_DIE_at_offset(raw_value)
+        
+        return value
+    
+    def __repr__(self):
+        if isinstance(self.value, DIE):
+            s = 'form=%-18s, value=%-10s, raw_value=%s' % (
+            self.form, self.value.tag, self.raw_value)
+        else:
+            s = 'form=%-18s, value=%-10s, raw_value=%s' % (
+            self.form, self.value, self.raw_value)
+        return s
+
+    def __str__(self):
+        return self.__repr__()
 
 
 class DIE(object):
@@ -88,7 +145,7 @@ class DIE(object):
         self.size = 0
         self._children = []
         self._parent = None
-
+        
         self._parse_DIE()
 
     def is_null(self):
@@ -176,45 +233,23 @@ class DIE(object):
                 self.abbrev_code)
         self.tag = abbrev_decl['tag']
         self.has_children = abbrev_decl.has_children()
-
-        # Guided by the attributes listed in the abbreviation declaration, parse
-        # values from the stream.
-        #
+        
         for name, form in abbrev_decl.iter_attr_specs():
             attr_offset = self.stream.tell()
             raw_value = struct_parse(structs.Dwarf_dw_form[form], self.stream)
-
-            value = self._translate_attr_value(form, raw_value)
+            
             self.attributes[name] = AttributeValue(
                 name=name,
                 form=form,
-                value=value,
                 raw_value=raw_value,
-                offset=attr_offset)
-
+                offset=attr_offset,
+                die=self
+            )
+        
         self.size = self.stream.tell() - self.offset
-
-    def _translate_attr_value(self, form, raw_value):
-        """ Translate a raw attr value according to the form
+    
+    def _translate_attr_values(self):
+        """ Translate all values of the attributes
         """
-        value = None
-        if form == 'DW_FORM_strp':
-            with preserve_stream_pos(self.stream):
-                value = self.dwarfinfo.get_string_from_table(raw_value)
-        elif form == 'DW_FORM_flag':
-            value = not raw_value == 0
-        elif form == 'DW_FORM_indirect':
-            try:
-                form = DW_FORM_raw2name[raw_value]
-            except KeyError as err:
-                raise DWARFError(
-                        'Found DW_FORM_indirect with unknown raw_value=' +
-                        str(raw_value))
-
-            raw_value = struct_parse(
-                self.cu.structs.Dwarf_dw_form[form], self.stream)
-            # Let's hope this doesn't get too deep :-)
-            return self._translate_attr_value(form, raw_value)
-        else:
-            value = raw_value
-        return value
+        for name, attr in self.attributes.items():
+            attr._translate_value()
